@@ -13,7 +13,6 @@
 #include "protocol.h"
 #include "ttask.h"
 #include "user.h"
-#include "cfg_fstorage.h" // For advanced_alarm_setting_t and its accessors
 #include <stdint.h>
 
 typedef enum
@@ -200,5 +199,57 @@ uint8_t co2_set_self_calibration(uint8_t enable);
  * @return uint8_t Error code.
  */
 uint8_t get_error_code(void);
+
+/**
+ * Get Sensor Recovery Attempt Count
+ *
+ * @return uint8_t Current recovery attempt number (0-5).
+ */
+uint8_t get_sensor_recovery_attempt(void);
+
+// Generic CO2 sensor initialization functions (used by both factory test and normal operation)
+/**
+ * @brief Set up CO2 sensor (GPIO, handle, driver init)
+ * @return int 0 on success, -1 on failure
+ */
+int co2_sensor_setup(void);
+
+/**
+ * @brief Power on CO2 sensor (caller should delay 1500ms after this)
+ * @return int 0 on success, -1 on failure
+ */
+int co2_sensor_power_on(void);
+
+/**
+ * @brief Initialize TWI for sensor (caller should delay 500ms after this)
+ * @return int 0 on success, -1 on failure
+ */
+int co2_sensor_twi_init(void);
+
+/**
+ * @brief Configure CO2 sensor
+ * @return int 0 on success, -1 on failure
+ */
+int co2_sensor_configure(void);
+
+/**
+ * @brief Clean up CO2 sensor (power off, uninit)
+ */
+void co2_sensor_cleanup(void);
+
+// Sensor details structure for factory test and other uses
+typedef struct {
+    uint8_t success;        // 1 if all details retrieved successfully, 0 if any failed
+    uint8_t serial_bytes[6]; // Serial number as bytes for display
+    uint16_t temp_offset_ticks;
+    uint16_t altitude_m;
+    uint16_t ambient_pressure_mbar;
+} sensor_details_t;
+
+// Get sensor details (reusable function for factory test and protocol)
+sensor_details_t co2_get_sensor_details(scd4x_handle_t *handle);
+
+// Expose the sensor handle for direct access
+extern scd4x_handle_t gs_handle;
 
 #endif // __CO2_H__

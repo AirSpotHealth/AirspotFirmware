@@ -5,11 +5,11 @@
 #include "history.h"
 #include "log.h"
 #include "queue.h"
-#include "stdint.h"
 #include "string.h"
 #include "ttask.h"
 #include "ui.h"
 #include "user.h"
+#include <stdint.h>
 
 // NUS (Nordic UART Service) Macros
 
@@ -75,8 +75,16 @@
 #define CMD_GET_SENSOR_DETAILS             0x30
 #define CMD_SET_CO2_SCALE_FACTOR           0x31
 #define CMD_SET_FLIGHT_MODE                0x32
-#define CMD_SET_DEVICE_SLEEP               0xEE
-#define CMD_FACTORY_RESET                  0xFA
+
+// Factory Test Commands
+#define CMD_ENTER_FACTORY_TEST_MODE  0xD0
+#define CMD_START_FACTORY_AUTO_TESTS 0xD1
+#define CMD_START_MANUAL_TEST        0xD2
+#define CMD_MANUAL_TEST_CONFIRM      0xD3
+#define CMD_FACTORY_TEST_RESULT      0xDD
+#define CMD_FACTORY_TEST_ABORT       0xDE
+#define CMD_SET_DEVICE_SLEEP         0xEE
+#define CMD_FACTORY_RESET            0xFA
 
 // Protocol Functions
 
@@ -189,5 +197,42 @@ void proto_send_battery_level(void);
  * Set the co2 scale factor
  */
 void proto_set_co2_scale_factor(uint8_t *frame);
+
+// Single dynamic factory test result structure
+typedef struct
+{
+    uint8_t  test_id; // Test ID (1-5)
+    uint8_t  result;  // 0=FAIL, 1=PASS
+    uint16_t value;   // Primary test value (CO2 ppm, voltage mV, etc.)
+    uint8_t  data[8]; // Variable length additional data
+} factory_test_result_t;
+
+/**
+ * @brief Send factory test result with dynamic payload length
+ *
+ * @param test_result Test result structure
+ * @param data_length Length of additional data (0-8 bytes)
+ */
+void proto_send_factory_test_result(factory_test_result_t *test_result, uint8_t data_length);
+
+/**
+ * @brief Send factory test ended response
+ *
+ * @param reason Reason code (0=timeout, 1=error, 2=complete)
+ */
+void proto_send_factory_test_ended(uint8_t reason);
+
+// Manual test communication variables (external access)
+extern uint8_t manual_test_type;   // Test type from app
+extern uint8_t manual_test_result; // Test result from user
+
+// Manual test type definitions
+#define MANUAL_TEST_CHARGE    6  // Test 6: Charge detection (automatic)
+#define MANUAL_TEST_EDGE      7  // Test 7: Screen edge visibility
+#define MANUAL_TEST_BLACK     8  // Test 8: Screen black display
+#define MANUAL_TEST_WHITE     9  // Test 9: Screen white display
+#define MANUAL_TEST_BUTTON    10 // Test 10: Button press detection
+#define MANUAL_TEST_BUZZER    11 // Test 11: Buzzer test
+#define MANUAL_TEST_VIBRATION 12 // Test 12: Vibration test
 
 #endif // __PROTOCOL_H__

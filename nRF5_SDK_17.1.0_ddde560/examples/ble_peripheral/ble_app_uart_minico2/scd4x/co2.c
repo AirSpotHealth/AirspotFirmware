@@ -2,6 +2,10 @@
 
 #define ASC_PER_DAY_RECORD_COUNT 400
 
+// CO2 power control macros (moved here to avoid "use before definition" errors)
+#define CO2_PWR_ON()  nrf_gpio_pin_set(PIN_CO2_PWR)
+#define CO2_PWR_OFF() nrf_gpio_pin_clear(PIN_CO2_PWR)
+
 /* TWI instance ID. */
 #define TWI_INSTANCE_ID 1
 
@@ -57,6 +61,9 @@ static co2_ctx_t co2_ctx = {
     .sensor_error_count = 0,
 };
 
+// Recovery mechanism state
+static uint8_t consecutive_sensor_errors = 0;
+
 /** Get CO2 concentration value */
 uint16_t get_co2_value(void)
 {
@@ -73,6 +80,12 @@ uint8_t get_sensor_variant(void)
 uint8_t get_error_code(void)
 {
     return co2_ctx.error_code;
+}
+
+/** Get Consecutive Sensor Error Count */
+uint8_t get_sensor_recovery_attempt(void)
+{
+    return consecutive_sensor_errors;
 }
 
 /** Get CC value */
@@ -265,8 +278,107 @@ void co2_print(const char *const fmt, ...)
     va_end(args);
 }
 
-static scd4x_handle_t gs_handle; /**< scd4x handle */
-static scd4x_bool_t   asc_enabled = SCD4X_BOOL_FALSE;
+// Generic CO2 sensor initialization functions (used by both factory test and normal operation)
+int co2_sensor_setup(void)
+{
+    print("CO2 Sensor Setup\n");
+
+    // GPIO setup
+    nrf_gpio_cfg_output(PIN_CO2_PWR);
+    CO2_PWR_OFF();
+
+    // Handle setup
+    DRIVER_SCD4X_LINK_INIT(&gs_handle, scd4x_handle_t);
+    DRIVER_SCD4X_LINK_IIC_INIT(&gs_handle, co2_twi_init);
+    DRIVER_SCD4X_LINK_IIC_DEINIT(&gs_handle, co2_twi_uninit);
+    DRIVER_SCD4X_LINK_IIC_WRITE_COMMAND(&gs_handle, co2_write);
+    DRIVER_SCD4X_LINK_IIC_WRITE_COMMAND_VOID(&gs_handle, co2_write_void);
+    DRIVER_SCD4X_LINK_IIC_READ_COMMAND(&gs_handle, co2_read);
+    DRIVER_SCD4X_LINK_DELAY_MS(&gs_handle, co2_delay_ms);
+    DRIVER_SCD4X_LINK_DEBUG_PRINT(&gs_handle, co2_print);
+
+    // Initialize driver with default type (will be updated after variant detection in configure)
+    // Setting type here is required for driver initialization, but actual variant is read later
+    scd4x_set_type(&gs_handle, SCD41); // Default type for initialization
+    scd4x_init(&gs_handle);
+
+    return 0;
+}
+
+int co2_sensor_power_on(void)
+{
+    print("CO2 Sensor Power On\n");
+    CO2_PWR_ON();
+    return 0; // Caller should delay 1500ms
+}
+
+int co2_sensor_twi_init(void)
+{
+    print("CO2 Sensor TWI Init\n");
+    return co2_twi_init(); // This doesn't delay
+}
+
+int co2_sensor_configure(void)
+{
+    print("CO2 Sensor Configure\n");
+    co2_ctx.error_code = 0;
+
+    // NOTE: Caller MUST call scd4x_stop_periodic_measurement() and wait 500ms BEFORE calling this function
+    // Per SCD4x datasheet Section 3.8: Configuration commands require sensor in IDLE state
+
+    // Get sensor variant FIRST and set correct type
+    // CRITICAL: SCD40 and SCD41 have different ranges, accuracy specs, and internal algorithms
+    // SCD40: 400-2000 ppm range, ±(50ppm + 5%)
+    // SCD41: 400-5000 ppm range, ±(40ppm + 5%)
+    // Setting wrong type causes systematic reading errors (often triggering ERROR_CODE_CO2_READING_OUT_OF_RANGE_LOW)
+    if (scd4x_get_sensor_variant(&gs_handle, &co2_ctx.sensor_variant) != 0)
+    {
+        print("Failed to get sensor variant, assuming SCD41\n");
+        co2_ctx.sensor_variant = 1; // Assume SCD41 as fallback
+    }
+    print("Sensor variant: %d (0=SCD40, 1=SCD41, 2=Unknown)\n", co2_ctx.sensor_variant);
+
+    // Set the correct sensor type based on detected variant
+    // Variant 0 = SCD40 (raw data 0x04), Variant 1 = SCD41 (raw data 0x14)
+    if (co2_ctx.sensor_variant == 0)
+    {
+        print("Configuring for SCD40\n");
+        scd4x_set_type(&gs_handle, SCD40);
+    }
+    else
+    {
+        print("Configuring for SCD41\n");
+        scd4x_set_type(&gs_handle, SCD41);
+    }
+
+    // Disable automatic self calibration (we use our own ASC)
+    if (scd4x_set_automatic_self_calibration(&gs_handle, false) != 0)
+    {
+        print("Failed to disable auto calibration\n");
+        co2_ctx.error_code = ERROR_CODE_SENSOR_AUTO_CALIB;
+        return -1;
+    }
+
+    // Load CC value from storage
+    co2_ctx.cc_value = cfg_fstorage_get_cc();
+    print("CC value loaded: %d\n", co2_ctx.cc_value);
+
+    return 0;
+}
+
+void co2_sensor_cleanup(void)
+{
+    print("CO2 Sensor Cleanup\n");
+    if (co2_ctx.is_twi_inited)
+    {
+        co2_twi_uninit();
+    }
+    CO2_PWR_OFF();
+}
+
+scd4x_handle_t      gs_handle; /**< scd4x handle - exposed for factory test */
+static scd4x_bool_t asc_enabled            = SCD4X_BOOL_FALSE;
+static uint8_t      data_ready_check_count = 0; /**< Loop counter for data ready checks */
 
 /**
  * @brief Enable/disable sensor automatic calibration
@@ -429,11 +541,53 @@ float get_co2_scale_factor(void)
         }                                                                                                      \
     } while (0)
 
-#define CO2_PWR_ON()  nrf_gpio_pin_set(PIN_CO2_PWR);
-#define CO2_PWR_OFF() nrf_gpio_pin_clear(PIN_CO2_PWR);
-
 // macro for waiting the co2 up his timer to be cleared
 #define WAIT_CO2_UP_HIS() TaskWait(EventGroupCheckBits(event_group_system, EVT_CO2_UP_HIS) == 0, TICK_MAX);
+
+// Reusable function to get sensor details (extracted from handle_get_sensor_details)
+sensor_details_t co2_get_sensor_details(scd4x_handle_t *handle)
+{
+    sensor_details_t details         = {0};
+    uint16_t         serial_words[3] = {0, 0, 0};
+
+    details.success = 1; // Assume success initially
+
+    if (scd4x_get_temperature_offset(handle, &details.temp_offset_ticks) != 0)
+    {
+        print("Failed to get temperature offset\n");
+        details.success = 0;
+    }
+
+    if (scd4x_get_sensor_altitude(handle, &details.altitude_m) != 0)
+    {
+        print("Failed to get sensor altitude\n");
+        details.success = 0;
+    }
+
+    if (scd4x_get_ambient_pressure(handle, &details.ambient_pressure_mbar) != 0)
+    {
+        print("Failed to get ambient pressure\n");
+        details.success = 0;
+    }
+
+    if (scd4x_get_serial_number(handle, serial_words) != 0)
+    {
+        print("Failed to get serial number\n");
+        details.success = 0;
+    }
+    else
+    {
+        // Convert uint16_t words to uint8_t bytes for display
+        details.serial_bytes[0] = (uint8_t)(serial_words[0] >> 8);
+        details.serial_bytes[1] = (uint8_t)(serial_words[0] & 0xFF);
+        details.serial_bytes[2] = (uint8_t)(serial_words[1] >> 8);
+        details.serial_bytes[3] = (uint8_t)(serial_words[1] & 0xFF);
+        details.serial_bytes[4] = (uint8_t)(serial_words[2] >> 8);
+        details.serial_bytes[5] = (uint8_t)(serial_words[2] & 0xFF);
+    }
+
+    return details;
+}
 
 static void handle_get_sensor_details(scd4x_handle_t *p_gs_handle)
 {
@@ -441,55 +595,16 @@ static void handle_get_sensor_details(scd4x_handle_t *p_gs_handle)
 
     EventGroupClearBits(event_group_system, EVT_GET_SENSOR_DETAILS);
 
-    uint16_t temp_offset_ticks     = 0;
-    uint16_t altitude_m            = 0;
-    uint16_t ambient_pressure_mbar = 0;
-    uint16_t serial_words[3]       = {0, 0, 0};
-    uint8_t  serial_bytes[6]       = {0};
-    uint8_t  get_details_success   = 1;
+    // Use the reusable function to get sensor details
+    sensor_details_t details = co2_get_sensor_details(p_gs_handle);
 
-    if (scd4x_get_temperature_offset(p_gs_handle, &temp_offset_ticks) != 0)
-    {
-        print("Failed to get temperature offset\n");
-        get_details_success = 0;
-    }
-    nrf_delay_ms(1);
+    print("temp_offset_ticks: %d, altitude_m: %d, ambient_pressure_mbar: %d\n",
+          details.temp_offset_ticks, details.altitude_m, details.ambient_pressure_mbar);
 
-    if (scd4x_get_sensor_altitude(p_gs_handle, &altitude_m) != 0)
+    if (details.success)
     {
-        print("Failed to get sensor altitude\n");
-        get_details_success = 0;
-    }
-    nrf_delay_ms(1);
-    if (scd4x_get_ambient_pressure(p_gs_handle, &ambient_pressure_mbar) != 0)
-    {
-        print("Failed to get ambient pressure\n");
-        get_details_success = 0;
-    }
-    nrf_delay_ms(1);
-
-    if (scd4x_get_serial_number(p_gs_handle, serial_words) != 0)
-    {
-        print("Failed to get serial number\n");
-        get_details_success = 0;
-    }
-    else
-    {
-        serial_bytes[0] = (uint8_t)(serial_words[0] >> 8);
-        serial_bytes[1] = (uint8_t)(serial_words[0] & 0xFF);
-        serial_bytes[2] = (uint8_t)(serial_words[1] >> 8);
-        serial_bytes[3] = (uint8_t)(serial_words[1] & 0xFF);
-        serial_bytes[4] = (uint8_t)(serial_words[2] >> 8);
-        serial_bytes[5] = (uint8_t)(serial_words[2] & 0xFF);
-    }
-    nrf_delay_ms(1);
-
-    print("temp_offset_ticks: %d, altitude_m: %d, ambient_pressure_mbar: %d\n", temp_offset_ticks, altitude_m, ambient_pressure_mbar);
-
-    if (get_details_success)
-    {
-        proto_send_sensor_details_response(temp_offset_ticks, altitude_m, ambient_pressure_mbar,
-                                           cfg_fstorage_get_auto_calibrate(), cfg_fstorage_get_calib_target(), serial_bytes, get_sensor_variant());
+        proto_send_sensor_details_response(details.temp_offset_ticks, details.altitude_m, details.ambient_pressure_mbar,
+                                           cfg_fstorage_get_auto_calibrate(), cfg_fstorage_get_calib_target(), details.serial_bytes, get_sensor_variant());
     }
     else
     {
@@ -508,30 +623,19 @@ TaskDefine(task_co2_read)
 
         print("task_co2_read run\n");
 
-        nrf_gpio_cfg_output(PIN_CO2_PWR);
-        CO2_PWR_OFF();
+        // Use generic CO2 sensor initialization functions
+        co2_sensor_setup();
 
-        DRIVER_SCD4X_LINK_INIT(&gs_handle, scd4x_handle_t);
-        DRIVER_SCD4X_LINK_IIC_INIT(&gs_handle, co2_twi_init);
-        DRIVER_SCD4X_LINK_IIC_DEINIT(&gs_handle, co2_twi_uninit);
-        DRIVER_SCD4X_LINK_IIC_WRITE_COMMAND(&gs_handle, co2_write);
-        DRIVER_SCD4X_LINK_IIC_WRITE_COMMAND_VOID(&gs_handle, co2_write_void);
-        DRIVER_SCD4X_LINK_IIC_READ_COMMAND(&gs_handle, co2_read);
-        DRIVER_SCD4X_LINK_DELAY_MS(&gs_handle, co2_delay_ms);
-        DRIVER_SCD4X_LINK_DEBUG_PRINT(&gs_handle, co2_print);
-
-        /* set chip type */
-        scd4x_set_type(&gs_handle, SCD41);
-
-        /* scd4x init */
-        scd4x_init(&gs_handle);
-
-        CO2_PWR_ON();
+        co2_sensor_power_on();
         TaskDelay(1500 / TICK_RATE_MS); // wait for sensor power on complete
 
-        co2_twi_init(); // init twi
+        if (co2_sensor_twi_init() != 0)
+        {
+            print("CO2 TWI initialization failed during startup\n");
+            co2_ctx.error_code = ERROR_CODE_SENSOR_I2C_COMM_FAILURE;
+            goto sensor_error;
+        }
         TaskDelay(500 / TICK_RATE_MS);
-        co2_ctx.error_code = 0;
 
         if (cfg_fstorage_get_erase_required() == 1)
         {
@@ -542,20 +646,25 @@ TaskDefine(task_co2_read)
             TaskDelay(1200 / TICK_RATE_MS); // wait for sensor to reset
         }
 
-        // set automatic self calibration false because we use our own ASC
-        scd4x_set_automatic_self_calibration(&gs_handle, false);
+        // Stop any ongoing measurement before configuration (per SCD4x datasheet Section 3.8)
+        print("Stopping periodic measurement before configuration\n");
+        scd4x_stop_periodic_measurement(&gs_handle);
+        TaskDelay(500 / TICK_RATE_MS); // Wait for sensor to enter IDLE state
 
-        co2_ctx.cc_value = cfg_fstorage_get_cc();
+        // Configure sensor (ASC disable, CC load, sensor variant)
+        if (co2_sensor_configure() != 0)
+        {
+            print("CO2 sensor configuration failed during startup\n");
+            // Error code already set by co2_sensor_configure()
+            goto sensor_error;
+        }
 
-        print("cc_value: %d\n", co2_ctx.cc_value);
+        // Initialize ASC if enabled
         calib_ctx.co2_calib_target = cfg_fstorage_get_calib_target();
         if (asc_enabled)
         {
             asc_init();
         }
-
-        scd4x_get_sensor_variant(&gs_handle, &co2_ctx.sensor_variant);
-        print("sensor_variant: %d\n", co2_ctx.sensor_variant);
 
         while (1)
         {
@@ -575,16 +684,23 @@ TaskDefine(task_co2_read)
             // check if the sensor is powered on
             if (!co2_ctx.is_twi_inited)
             {
-                nrf_gpio_cfg_output(PIN_CO2_PWR);
-                CO2_PWR_ON();
+                print("DEVICE REBOOTED - Re-initializing sensor\n");
+
+                // Re-initialize sensor using generic functions
+                co2_sensor_power_on();
                 TaskDelay(1500 / TICK_RATE_MS); // wait for sensor power on complete
 
-                co2_twi_init();
+                if (co2_sensor_twi_init() != 0)
+                {
+                    print("CO2 TWI initialization failed after device reboot\n");
+                    co2_ctx.error_code = ERROR_CODE_SENSOR_I2C_COMM_FAILURE;
+                    goto sensor_error;
+                }
                 TaskDelay(500 / TICK_RATE_MS);
+
                 co2_ctx.error_code = 0;
 
                 print("DEVICE REBOOTED SETTING ASC TO FALSE\n");
-
                 APP_CHECK(sensor_error, scd4x_set_automatic_self_calibration(&gs_handle, false), ERROR_CODE_SENSOR_AUTO_CALIB); // set automatic self calibration
             }
 
@@ -678,23 +794,25 @@ TaskDefine(task_co2_read)
                 APP_CHECK(sensor_error, scd4x_read(&gs_handle, &co2_ctx.co2_ppm, &co2_ctx.sensor_status, &co2_ctx.asc_count, &co2_ctx.asc_correction), ERROR_CODE_SENSOR_READ);
                 print("read co2 %d ppm, sensor status %d\n", co2_ctx.co2_ppm, co2_ctx.sensor_status);
 
-                // use scaling to get the real co2 ppm
-                co2_ctx.co2_ppm = (uint16_t)(co2_ctx.co2_ppm * get_co2_scale_factor());
-                print("co2_ppm after scaling: %d\n", co2_ctx.co2_ppm);
-
-                // Check for invalid CO2 readings
-                if (co2_ctx.co2_ppm < 300 || co2_ctx.co2_ppm > 50000)
-                {
-                    print("Invalid CO2 reading: %d ppm\n", co2_ctx.co2_ppm);
-                    co2_ctx.error_code = ERROR_CODE_SENSOR_READ;
-                    goto sensor_error;
-                }
-
                 // if the sensor status is not zero, it means the sensor is not ready
                 if (co2_ctx.sensor_status != 0)
                 {
                     print("co2 sensor status not ready: %d\n", co2_ctx.sensor_status);
-                    co2_ctx.error_code = ERROR_CODE_SENSOR_READ;
+                    co2_ctx.error_code = ERROR_CODE_SENSOR_NOT_READY;
+                    goto sensor_error;
+                }
+
+                // use scaling to get the real co2 ppm
+                co2_ctx.co2_ppm = (uint16_t)(co2_ctx.co2_ppm * get_co2_scale_factor());
+                print("co2_ppm after scaling: %d\n", co2_ctx.co2_ppm);
+
+                // Check for invalid CO2 readings (only extremely high values)
+                // Note: Low values (< 400 ppm) are normal for clean air and are clamped to 400 in display
+                // SCD40/SCD41 range: 400-5000 ppm specified, but readings down to ~300 ppm are valid for outdoor air
+                if (co2_ctx.co2_ppm > 50000)
+                {
+                    print("Invalid CO2 reading: %d ppm (too high)\n", co2_ctx.co2_ppm);
+                    co2_ctx.error_code = ERROR_CODE_CO2_READING_OUT_OF_RANGE_HIGH;
                     goto sensor_error;
                 }
 
@@ -774,6 +892,7 @@ TaskDefine(task_co2_read)
                 }
 
                 co2_ctx.sensor_error_count = 0; // reset sensor error count after a successful reading
+                consecutive_sensor_errors  = 0; // reset consecutive error count after successful reading
 
                 if (EventGroupCheckBits(event_group_system, EVT_CO2_MEASUREMENT_BREAK)) break; // Exit on break condition
 
@@ -794,6 +913,8 @@ TaskDefine(task_co2_read)
                         GetSystemTickSpan(co2_ctx.start_tick, GetSystemTickCount()) >= (1 * 60 * 1000) / TICK_RATE_MS,
                     TICK_MAX);
             }
+            //
+            //
             else if (co2_ctx.power_mode == PWR_MODE_LOW)
             {
                 print("low power wait\n");
@@ -823,7 +944,7 @@ TaskDefine(task_co2_read)
             continue;
 
         sensor_error:
-            print("read scd4x sensor error\n");
+            print("read scd4x sensor error - error_code=%d, consecutive_errors=%d\n", co2_ctx.error_code, consecutive_sensor_errors + 1);
 
             // if the error code is not start measurement, stop the measurement first
             if (co2_ctx.error_code != ERROR_CODE_SENSOR_MEASURMENT_START)
@@ -837,38 +958,58 @@ TaskDefine(task_co2_read)
 
             add_history_record(co2_ctx.error_code, RECORD_TYPE_SENSOR_ERROR);
 
-            // if it is for the first time, continue with just a history record
+            // First error: just log and retry immediately
             if (co2_ctx.sensor_error_count == 0)
             {
+                print("First error - logging and retrying immediately\n");
                 EventGroupSetBits(event_group_system, EVT_CO2_UP_HIS);
                 co2_ctx.sensor_error_count += 1;
+                consecutive_sensor_errors++;
+                continue;
+            }
+            // Second error: power cycle sensor and retry (silent - no display to user)
+            else if (consecutive_sensor_errors == 1)
+            {
+                print("Second error - power cycling sensor (silent recovery)\n");
+                consecutive_sensor_errors++;
+                EventGroupSetBits(event_group_system, EVT_CO2_UP_HIS); // Log to history only
+
+                // Power cycle sensor
+                if (co2_ctx.is_twi_inited)
+                {
+                    co2_twi_uninit();
+                }
+                CO2_PWR_OFF();
+
+                TaskDelay(2000 / TICK_RATE_MS); // 2 second power-off
 
                 continue;
             }
-            // if it is for the second time, set the sensor error flag and the up his flag
-            // and restart the sensor
+            // Third error: restart entire device
             else
             {
+                print("Third consecutive error - RESTARTING DEVICE\n");
                 EventGroupSetBits(event_group_system, EVT_CO2_SENSOR_ERROR | EVT_CO2_UP_HIS);
+                EventGroupSetBits(event_group_system, EVT_SCREEN_ON_ONETIME);
+
+                // Show error briefly before restart
+                TaskDelay(2000 / TICK_RATE_MS);
+
+                // Log device restart to history
+                
+                WAIT_CO2_UP_HIS();
+                add_history_record(0xFF, RECORD_TYPE_SENSOR_ERROR); // 0xFF = device restart marker
+                EventGroupSetBits(event_group_system, EVT_CO2_UP_HIS);
+                TaskDelay(100 / TICK_RATE_MS); // Brief delay to ensure history write completes
+
+                // System reset
+                print("TIMESTAMP BEFORE SENSOR-ERROR RESET: %u\n", get_time_now());
+                NVIC_SystemReset();
             }
-
-            if (co2_ctx.is_twi_inited)
-            {
-                co2_twi_uninit();
-            }
-            CO2_PWR_OFF();
-
-            // wait for 1 second
-            TaskDelay(1000 / TICK_RATE_MS); // wait for 1 second
-
-            continue;
         }
 
-        if (co2_ctx.is_twi_inited)
-        {
-            co2_twi_uninit();
-        }
-        CO2_PWR_OFF();
+        // Cleanup sensor using generic function
+        co2_sensor_cleanup();
         print("END CO2\n");
         TTE
     }

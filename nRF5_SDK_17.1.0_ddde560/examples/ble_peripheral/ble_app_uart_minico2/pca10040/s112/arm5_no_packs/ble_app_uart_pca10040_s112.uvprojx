@@ -485,6 +485,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\..\queue.c</FilePath>
             </File>
+            <File>
+              <FileName>factory_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\..\factory_test_task.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -4182,6 +4187,11 @@
               <FileName>queue.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\..\..\queue.c</FilePath>
+            </File>
+            <File>
+              <FileName>factory_test_task.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\..\factory_test_task.c</FilePath>
             </File>
           </Files>
         </Group>

@@ -16,7 +16,8 @@ typedef enum
     UI_PAGE_PASSKEY,
     UI_PAGE_BAT_LOW,
     UI_PAGE_SENSOR_ERROR,
-    UI_PAGE_POWER_ON
+    UI_PAGE_POWER_ON,
+    UI_PAGE_FACTORY_TEST
 } ui_page_t;
 
 /** Drawing Area */
@@ -179,6 +180,9 @@ extern const uint8_t font_widths[96];
 /** Get error code */
 extern uint8_t get_error_code(void);
 
+/** Get sensor recovery attempt count */
+extern uint8_t get_sensor_recovery_attempt(void);
+
 /** UI mode */
 extern uint8_t cfg_fstorage_get_ui_mode(void);
 
@@ -271,6 +275,9 @@ extern uint16_t get_co2_value(void);
 
 /** Draw Power on message */
 void ui_draw_power_on(void);
+
+/** Draw factory test */
+void ui_draw_factory_test(void);
 
 /** Draw text */
 // Function to render a text string at (x, y) with dynamic spacing

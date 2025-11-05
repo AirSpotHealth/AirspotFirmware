@@ -572,18 +572,13 @@ TaskDefine(task_ui)
                     {
                     default:
                     case UI_BLINK_NONE:
-                        if (EventGroupCheckBits(event_group_system, EVT_CO2_SENSOR_ERROR))
-                        {
-                            EventGroupClearBits(event_group_system, EVT_CO2_SENSOR_ERROR);
-                        }
-                        else
-                        {
-                            app_timer_stop(ui_blink_timer);
-                            app_timer_start(ui_blink_timer, APP_TIMER_TICKS(300), NULL);
-                            ui_blink_slc   = UI_BLINK_CO2_VALUE;
-                            ui_blink_state = UI_BOOL_TRUE;
-                            EventGroupSetBits(event_group_system, EVT_CO2_UPDATE_ONCE);
-                        }
+                        // Note: EVT_CO2_SENSOR_ERROR handling removed - 3rd error auto-reboots device
+                        // No user interaction possible during 2s delay before reboot
+                        app_timer_stop(ui_blink_timer);
+                        app_timer_start(ui_blink_timer, APP_TIMER_TICKS(300), NULL);
+                        ui_blink_slc   = UI_BLINK_CO2_VALUE;
+                        ui_blink_state = UI_BOOL_TRUE;
+                        EventGroupSetBits(event_group_system, EVT_CO2_UPDATE_ONCE);
                         break;
                     case UI_BLINK_ALARM:
                         set_buzzer_state(!get_buzzer_state());

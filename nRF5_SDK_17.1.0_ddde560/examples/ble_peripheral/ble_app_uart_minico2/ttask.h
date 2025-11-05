@@ -343,6 +343,16 @@ extern EventGroup_t event_group_system;
 #define EVT_GET_SENSOR_DETAILS    (1ULL << 38)
 #define EVT_FLIGHT_MODE_UPDATE    (1ULL << 39)
 
+// Factory test events (40-47)
+#define EVT_FACTORY_TEST_START         (1ULL << 40)
+#define EVT_FACTORY_TEST_STOP          (1ULL << 41)
+#define EVT_FACTORY_TEST_MANUAL_START  (1ULL << 42)
+#define EVT_FACTORY_TEST_MANUAL_RESULT (1ULL << 43)
+#define EVT_FACTORY_TEST_COMPLETE      (1ULL << 44)
+#define EVT_FACTORY_TEST_TIMEOUT       (1ULL << 45)
+#define EVT_FACTORY_TEST_AUTO_START    (1ULL << 46)
+#define EVT_FACTORY_TEST_MODE_ACTIVE   (1ULL << 47)
+
 #define EVT_UI_UPDATE             (EVT_UI_BLINK | EVT_UI_UP_CO2 | EVT_BAT_UPDATE | EVT_TIME_UPDATE | EVT_UI_UP_BLE | EVT_UI_OFF_SCREEN | EVT_CO2_CALIB_MODE_CHANGE | EVT_TOGGLE_UI_MODE | EVT_BAT_LOW | EVT_BAT_LOW_WARNING | EVT_UI_GRAPH_UPDATE | EVT_FLIGHT_MODE_UPDATE)
 #define EVT_CO2_UPDATE            (EVT_CO2_UPDATE_ONCE | EVT_CO2_CALIB_DONE | EVT_CO2_CALIB_START | EVT_BAT_LOW | EVT_BAT_LOW_WARNING | EVT_CO2_FACTORY_RESET | EVT_GET_SENSOR_DETAILS)
 #define EVT_CO2_MEASUREMENT_BREAK (EVT_BAT_LOW | EVT_BAT_LOW_WARNING | EVT_CO2_CALIB_START | EVT_CO2_CALIB_DONE | EVT_CO2_FACTORY_RESET | EVT_CO2_CALIB_MODE_CHANGE | EVT_GET_SENSOR_DETAILS)
@@ -361,10 +371,13 @@ TaskDeclare(task_populate_fake_records);
 // power on task that runs once at startup
 TaskDeclare(task_power_on);
 
+// factory test task that runs in factory test mode
+TaskDeclare(task_factory_test);
+
 #define DEVICE_NAME       "AirSpot" /**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME "MinTec"  /**< Manufacturer. Will be passed to Device Information Service. */
 #define HARDWARE_REVISION "1.1.0"
-#define SOFTWARE_REVISION "1.5.0"
+#define SOFTWARE_REVISION "1.5.4"
 #define FIRMWARE_REVISION "s112_nrf52_7.2.0"
 
 #endif // __TTASK_H__

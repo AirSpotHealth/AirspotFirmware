@@ -4,6 +4,10 @@
 
 QUEUE_DEF(queue_proto, 1, 512);
 
+// Manual test communication variables
+uint8_t manual_test_type   = 0; // Test type from app
+uint8_t manual_test_result = 0; // Test result from user
+
 extern uint8_t history_erase_all;
 extern int16_t get_cc_value(void);
 extern void    update_calibration_target(uint16_t target);
@@ -12,6 +16,7 @@ extern uint8_t get_sensor_variant(void);
 extern void    toggle_connection_interval(void);
 extern void    set_fast_interval_timer(void);
 extern void    update_flight_mode_activation_time(void);
+extern void    start_factory_test(void);
 
 /**
  * @brief 将接收的串口数据压入缓存
@@ -327,21 +332,21 @@ static void frame_received_handler(uint8_t *frame, uint16_t len)
     }
     case CMD_SET_SENSOR_ERROR_DEBUG: // Set Sensor Error Flag (Debug)
     {
-        // if frame[3] == 0x01, set the sensor error flag
-        // if it is 0x02 clear the sensor error flag
-        if (frame[4] == 0x01)
-        {
-            print("set sensor error\n");
-            EventGroupSetBits(event_group_system, EVT_CO2_SENSOR_ERROR | EVT_CO2_UP_HIS);
-            // set a fake sensor error record
-            add_record(ERROR_CODE_SENSOR_READ, RECORD_TYPE_SENSOR_ERROR);
-            EventGroupSetBits(event_group_system, EVT_SCREEN_ON_ONETIME);
-        }
-        else
-        {
-            print("clear sensor error\n");
-            EventGroupClearBits(event_group_system, EVT_CO2_SENSOR_ERROR);
-        }
+        // // if frame[3] == 0x01, set the sensor error flag
+        // // if it is 0x02 clear the sensor error flag
+        // if (frame[4] == 0x01)
+        // {
+        //     print("set sensor error\n");
+        //     EventGroupSetBits(event_group_system, EVT_CO2_SENSOR_ERROR | EVT_CO2_UP_HIS);
+        //     // set a fake sensor error record
+        //     add_record(ERROR_CODE_SENSOR_READ, RECORD_TYPE_SENSOR_ERROR);
+        //     EventGroupSetBits(event_group_system, EVT_SCREEN_ON_ONETIME);
+        // }
+        // else
+        // {
+        //     print("clear sensor error\n");
+        //     EventGroupClearBits(event_group_system, EVT_CO2_SENSOR_ERROR);
+        // }
         break;
     }
     case CMD_GET_BATTERY_LEVEL: // Send Battery Level
@@ -620,6 +625,74 @@ static void frame_received_handler(uint8_t *frame, uint16_t len)
         NVIC_SystemReset();        // Reset the device
         break;
     }
+    case CMD_ENTER_FACTORY_TEST_MODE:
+    {
+        print("Enter factory test mode\n");
+        if (EventGroupCheckBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE))
+        {
+            print("Already in factory test mode - ignoring restart request\n");
+        }
+        else
+        {
+            print("Starting factory test mode...\n");
+            start_factory_test();
+        }
+        break;
+    }
+    case CMD_FACTORY_TEST_ABORT:
+    {
+        print("Factory test abort\n");
+        // check if we need to put device to sleep on 4th byte
+        // 0 means put device to sleep
+        // 1 means don't put device to sleep
+        EventGroupClearBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE);
+
+        if (frame[4] == 0x00)
+        {
+            print("Put device to sleep\n");
+            EventGroupSetBits(event_group_system, EVT_DEVICE_SLEEP);
+        }
+        else
+        {
+            print("Don't put device to sleep and reset the device\n");
+            sd_power_gpregret_set(0, 0);
+            NVIC_SystemReset();
+            break;
+        }
+    }
+    case CMD_START_FACTORY_AUTO_TESTS:
+    {
+        print("Start factory auto tests\n");
+        EventGroupSetBits(event_group_system, EVT_FACTORY_TEST_AUTO_START);
+        break;
+    }
+    case CMD_START_MANUAL_TEST:
+    {
+        if (len >= 5)
+        {
+            uint8_t test_type = frame[4];
+            print("Start manual test: %d\n", test_type);
+
+            // Store test type and signal factory test task
+            manual_test_type = test_type;
+            EventGroupSetBits(event_group_system, EVT_FACTORY_TEST_MANUAL_START);
+        }
+        break;
+    }
+    case CMD_MANUAL_TEST_CONFIRM:
+    {
+        if (len >= 5)
+        {
+            uint8_t result = frame[4]; // 0=FAIL, 1=PASS
+            print("Manual test confirm: result=%d\n", result);
+
+            // Store result and signal factory test task
+            manual_test_result = result;
+            EventGroupSetBits(event_group_system, EVT_FACTORY_TEST_MANUAL_RESULT);
+        }
+        break;
+    }
+
     default:
         print("Unknown Command Received: %d", frame[2]);
         break;
@@ -1230,4 +1303,105 @@ void proto_send_sensor_details_response(uint16_t temp_offset,
 
     set_frame_checksum(tx_frame, 5 + payload_len); // 4 header bytes + payload_len byte + payload
     proto_send_frame(tx_frame, 5 + payload_len);
+}
+
+/**
+ * @brief Send factory test result with dynamic payload length
+ *
+ * Frame format:
+ * - Byte 0: CMD_FIRST_BYTE (0xFF)
+ * - Byte 1: CMD_SECOND_BYTE (0xAA)
+ * - Byte 2: CMD_START_FACTORY_TEST (0xDD)
+ * - Byte 3: Payload length (4 + data_length)
+ * - Byte 4: Test ID (1-5)
+ * - Byte 5: Result (0=FAIL, 1=PASS)
+ * - Byte 6: Value high byte
+ * - Byte 7: Value low byte
+ * - Byte 8+: Additional data (0-8 bytes)
+ * - Last: Checksum
+ */
+void proto_send_factory_test_result(factory_test_result_t *test_result, uint8_t data_length)
+{
+    uint8_t tx_frame[32]   = {0};
+    uint8_t payload_length = 4 + data_length; // 4 base bytes + additional data
+
+    tx_frame[0] = CMD_FIRST_BYTE;
+    tx_frame[1] = CMD_SECOND_BYTE;
+    tx_frame[2] = CMD_FACTORY_TEST_RESULT;
+    tx_frame[3] = payload_length;
+    tx_frame[4] = test_result->test_id;
+    tx_frame[5] = test_result->result;
+    tx_frame[6] = (uint8_t)(test_result->value >> 8);
+    tx_frame[7] = (uint8_t)(test_result->value & 0xFF);
+
+    // Copy additional data if any
+    if (data_length > 0 && data_length <= 8)
+    {
+        memcpy(&tx_frame[8], test_result->data, data_length);
+    }
+
+    uint8_t frame_length = 4 + payload_length + 1; // Header + payload + checksum
+    set_frame_checksum(tx_frame, frame_length);
+
+    print("Factory test %d: %s, Value=%d",
+          test_result->test_id,
+          test_result->result ? "PASS" : "FAIL",
+          test_result->value);
+
+    if (data_length > 0)
+    {
+        print(", Data: ");
+        for (uint8_t i = 0; i < data_length; i++)
+        {
+            print("%02X ", test_result->data[i]);
+        }
+    }
+    print("\n");
+
+    proto_send_frame(tx_frame, frame_length);
+}
+
+/**
+ * @brief Send factory test ended response using CMD_ENTER_FACTORY_TEST_MODE
+ *
+ * Frame format:
+ * - Byte 0: CMD_FIRST_BYTE (0xFF)
+ * - Byte 1: CMD_SECOND_BYTE (0xAA)
+ * - Byte 2: CMD_ENTER_FACTORY_TEST_MODE (0xD0)
+ * - Byte 3: Payload length (2)
+ * - Byte 4: Status (0x00 = ended)
+ * - Byte 5: Reason (0=timeout, 1=error, 2=complete)
+ * - Byte 6: Checksum
+ */
+void proto_send_factory_test_ended(uint8_t reason)
+{
+    uint8_t tx_frame[16] = {0};
+
+    tx_frame[0] = CMD_FIRST_BYTE;
+    tx_frame[1] = CMD_SECOND_BYTE;
+    tx_frame[2] = CMD_ENTER_FACTORY_TEST_MODE;
+    tx_frame[3] = 0x02;   // Payload length
+    tx_frame[4] = 0x00;   // Status: 0x00 = ended (different from 0x01 = started)
+    tx_frame[5] = reason; // Reason code
+
+    set_frame_checksum(tx_frame, 7);
+    proto_send_frame(tx_frame, 7);
+
+    const char *reason_str;
+    switch (reason)
+    {
+    case 0:
+        reason_str = "timeout";
+        break;
+    case 1:
+        reason_str = "error";
+        break;
+    case 2:
+        reason_str = "complete";
+        break;
+    default:
+        reason_str = "unknown";
+        break;
+    }
+    print("Factory test ended notification sent - reason: %s\n", reason_str);
 }

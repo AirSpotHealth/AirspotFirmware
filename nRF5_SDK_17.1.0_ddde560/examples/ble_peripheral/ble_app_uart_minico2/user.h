@@ -21,19 +21,23 @@
 #define VIBRATOR_OFF() nrf_gpio_pin_clear(PIN_VIBRATOR)
 
 // Error codes
-#define ERROR_CODE_SENSOR_READ             0x01
-#define ERROR_CODE_SENSOR_AUTO_CALIB       0x02
-#define ERROR_CODE_SENSOR_RESET            0x03
-#define ERROR_CODE_SENSOR_MEASURMENT_START 0x04
-#define ERROR_CODE_SENSOR_DATA_STATUS      0x05
-#define ERROR_CODE_SENSOR_VARIANT          0x06
-#define ERROR_CODE_SENSOR_MEASURMENT_STOP  0x07
-#define ERROR_CODE_INVALID_CO2_READING     0x08
-#define ERROR_CODE_SENSOR_I2C_COMM_FAILURE 0x09
-#define ERROR_CODE_SENSOR_CRC_FAILURE      0x0A
+#define ERROR_CODE_SENSOR_READ                   0x01
+#define ERROR_CODE_SENSOR_AUTO_CALIB             0x02
+#define ERROR_CODE_SENSOR_RESET                  0x03
+#define ERROR_CODE_SENSOR_MEASURMENT_START       0x04
+#define ERROR_CODE_SENSOR_DATA_STATUS            0x05
+#define ERROR_CODE_SENSOR_VARIANT                0x06
+#define ERROR_CODE_SENSOR_MEASURMENT_STOP        0x07
+#define ERROR_CODE_INVALID_CO2_READING           0x08
+#define ERROR_CODE_SENSOR_I2C_COMM_FAILURE       0x09
+#define ERROR_CODE_SENSOR_CRC_FAILURE            0x0A
+#define ERROR_CODE_SENSOR_NOT_READY              0x0B
+#define ERROR_CODE_CO2_READING_OUT_OF_RANGE_HIGH 0x0C
+#define ERROR_CODE_CO2_READING_OUT_OF_RANGE_LOW  0x0D // Not used - low values clamped to 400 in display
 
 // Reset reason code
 #define RESET_REASON_WAKEUP_FROM_OFF 0xA5
+#define RESET_REASON_FACTORY_TEST    0xA6
 
 // Function declarations
 void     uninit_spi(void);

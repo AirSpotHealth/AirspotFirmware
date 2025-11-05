@@ -693,12 +693,18 @@ void ui_draw_indicator_rect(void)
  */
 void ui_draw_sensor_error(void)
 {
-    char    error_str[8]; // Buffer for "CODE: X" + null terminator
-    uint8_t code = get_error_code();
+    char    error_str[16]; // Buffer for "CODE: XXX"
+    uint8_t code        = get_error_code();
+    uint8_t error_count = get_sensor_recovery_attempt();
+
     snprintf(error_str, sizeof(error_str), "CODE: %d", code);
 
     ui_draw_text(-1, -1, "SENSOR ERROR", true);
-    ui_draw_text(-1, 116, error_str, true);
+    ui_draw_text(-1, 96, error_str, true);
+
+    // This display only shows on 3rd error (error_count >= 2)
+    // 1st and 2nd errors are handled silently in background
+    ui_draw_text(-1, 116, "REBOOTING...", true);
 }
 
 /**

@@ -129,7 +129,8 @@
 #define UART_TX_BUF_SIZE 256 /**< UART TX buffer size. */
 #define UART_RX_BUF_SIZE 256 /**< UART RX buffer size. */
 
-#define RESET_REASON_CODE_POWER_ON 5
+#define RESET_REASON_CODE_POWER_ON     5
+#define RESET_REASON_CODE_FACTORY_TEST 9
 
 BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT); /**< BLE NUS service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                         /**< GATT module instance. */
@@ -699,12 +700,15 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
         ble_state = CONNECTED;
         EventGroupSetBits(event_group_system, EVT_UI_UP_BLE);
 
-        // Added for bonding
-        err_code = pm_conn_secure(p_ble_evt->evt.gap_evt.conn_handle, false);
-        if (err_code != NRF_ERROR_BUSY)
-        {
-            APP_ERROR_CHECK(err_code);
-        }
+        // // Added for bonding - only initiate security in normal mode, not in factory test
+        // if (!EventGroupCheckBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE))
+        // {
+        //     err_code = pm_conn_secure(p_ble_evt->evt.gap_evt.conn_handle, false);
+        //     if (err_code != NRF_ERROR_BUSY)
+        //     {
+        //         APP_ERROR_CHECK(err_code);
+        //     }
+        // }
         break;
 
     case BLE_GAP_EVT_DISCONNECTED:
@@ -775,18 +779,26 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
                      p_ble_evt->evt.gap_evt.params.conn_param_update.conn_params.conn_sup_timeout);
         break;
     case BLE_GAP_EVT_PASSKEY_DISPLAY:
-        NRF_LOG_INFO("passkey: %c,%c,%c,%c,%c,%c",
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[0],
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[1],
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[2],
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[3],
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[4],
-                     p_ble_evt->evt.gap_evt.params.passkey_display.passkey[5]);
-        ui_set_passkey((const char *)p_ble_evt->evt.gap_evt.params.passkey_display.passkey);
-        EventGroupSetBits(event_group_system, EVT_SHOW_PASSKEY);
+        // Only handle passkey display in normal mode, not in factory test mode
+        if (!EventGroupCheckBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE))
+        {
+            NRF_LOG_INFO("passkey: %c,%c,%c,%c,%c,%c",
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[0],
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[1],
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[2],
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[3],
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[4],
+                         p_ble_evt->evt.gap_evt.params.passkey_display.passkey[5]);
+            ui_set_passkey((const char *)p_ble_evt->evt.gap_evt.params.passkey_display.passkey);
+            EventGroupSetBits(event_group_system, EVT_SHOW_PASSKEY);
+        }
+        else
+        {
+            NRF_LOG_INFO("Factory test mode: Passkey display skipped");
+        }
         break;
-    case BLE_GAP_EVT_AUTH_STATUS:
-        // 认证，如果认证失败，则断开连接
+        case BLE_GAP_EVT_AUTH_STATUS:
+        // Authentication status - handle differently for factory test mode
         if (p_ble_evt->evt.gap_evt.params.auth_status.auth_status == BLE_GAP_SEC_STATUS_SUCCESS)
         {
             NRF_LOG_INFO("pairing success");
@@ -794,9 +806,18 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
         else
         {
             NRF_LOG_INFO("pairing failed");
-            sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            // Only disconnect on auth failure in normal mode, not in factory test mode
+            if (!EventGroupCheckBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE))
+            {
+                sd_ble_gap_disconnect(m_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+            }
         }
-        EventGroupSetBits(event_group_system, EVT_CHANCEL_SHOW_PASSKEY);
+        
+        // Only cancel passkey display in normal mode
+        if (!EventGroupCheckBits(event_group_system, EVT_FACTORY_TEST_MODE_ACTIVE))
+        {
+            EventGroupSetBits(event_group_system, EVT_CHANCEL_SHOW_PASSKEY);
+        }
         break;
     default:
         // No implementation needed.
@@ -1020,12 +1041,12 @@ static void peer_manager_init(void)
 
     memset(&sec_param, 0, sizeof(ble_gap_sec_params_t));
 
-    sec_param.bond           = SEC_PARAM_BOND;
-    sec_param.mitm           = SEC_PARAM_MITM;
-    sec_param.lesc           = SEC_PARAM_LESC;
-    sec_param.keypress       = SEC_PARAM_KEYPRESS;
-    sec_param.io_caps        = SEC_PARAM_IO_CAPABILITIES;
-    sec_param.oob            = SEC_PARAM_OOB;
+    sec_param.bond           = SEC_PARAM_BOND;  // Enable bonding
+    sec_param.mitm           = 0;               // No MITM => Just Works
+    sec_param.lesc           = 0;
+    sec_param.keypress       = 0;
+    sec_param.io_caps        = BLE_GAP_IO_CAPS_NONE; // No input/output
+    sec_param.oob            = 0;
     sec_param.min_key_size   = SEC_PARAM_MIN_KEY_SIZE;
     sec_param.max_key_size   = SEC_PARAM_MAX_KEY_SIZE;
     sec_param.kdist_own.enc  = 1;
@@ -1055,6 +1076,13 @@ static void tick_tasks()
     TaskTick(task_history_storage);
     TaskTick(task_history_upload);
     TaskTick(task_populate_fake_records);
+    TaskTick(task_factory_test);
+}
+
+static void tick_factory_test_tasks()
+{
+    TaskTick(task_protocol);
+    TaskTick(task_factory_test);
 }
 
 // Add this flag at module level
@@ -1125,14 +1153,25 @@ void power_on_timer_timeout_handler(void *pcontext)
     TaskTick(task_power_on);
 }
 
+void factory_test_timer_timeout_handler(void *pcontext)
+{
+    IncSystemTickCount();
+    tick_factory_test_tasks();
+}
+
 void run_task(void)
 {
     if (reset_reason_code == RESET_REASON_CODE_POWER_ON)
-
     {
         // print("task_power_on\n");
         TaskRun(task_power_on);
+        return;
+    }
 
+    if (reset_reason_code == RESET_REASON_CODE_FACTORY_TEST)
+    {
+        TaskRun(task_protocol);
+        TaskRun(task_factory_test);
         return;
     }
 
@@ -1192,6 +1231,10 @@ void check_reset_reason(void)
     if (reset_code == RESET_REASON_WAKEUP_FROM_OFF)
     {
         reset_reason_code = RESET_REASON_CODE_POWER_ON;
+    }
+    else if (reset_code == RESET_REASON_FACTORY_TEST)
+    {
+        reset_reason_code = RESET_REASON_CODE_FACTORY_TEST;
     }
     else
     {
@@ -1352,10 +1395,29 @@ void sleep_device(void)
     system_off();
 }
 
+void start_factory_test(void)
+{
+    print("factory_test_mode_enter\n");
+
+    app_timer_pause();
+    advertising_stop();
+    app_timer_resume();
+    app_timer_stop_all();
+
+    sd_power_gpregret_set(0, RESET_REASON_FACTORY_TEST);
+
+    nrf_drv_wdt_channel_feed(m_channel_id); // Last feed before reset
+
+    print("Resetting to factory test mode...\n");
+
+    sd_nvic_SystemReset();
+}
+
 static uint32_t button_held_time = 0;
 
 void init(void)
 {
+    // Initialize all required subsystems for factory test mode
 
     timers_init();
     power_management_init();
@@ -1366,7 +1428,6 @@ void init(void)
     services_init();
     advertising_init();
     conn_params_init();
-    peer_manager_init();
 
     scheduler_init();
 
@@ -1376,6 +1437,8 @@ void init(void)
     user_init();
 
     check_reset_reason();
+
+    peer_manager_init();
 
     nrf_drv_wdt_config_t config   = NRF_DRV_WDT_DEAFULT_CONFIG;
     uint32_t             err_code = nrf_drv_wdt_init(&config, NULL);
@@ -1427,6 +1490,15 @@ void init_system_on(void)
     start_timer_and_main_loop();
 }
 
+void init_factory_test(void)
+{
+    app_timer_create(&ttask_timer, APP_TIMER_MODE_REPEATED, factory_test_timer_timeout_handler);
+
+    advertising_start();
+
+    start_timer_and_main_loop();
+}
+
 int main(void)
 {
     log_init();
@@ -1437,7 +1509,10 @@ int main(void)
     {
         init_startup();
     }
-
+    else if (reset_reason_code == RESET_REASON_CODE_FACTORY_TEST)
+    {
+        init_factory_test();
+    }
     else
     {
         init_system_on();

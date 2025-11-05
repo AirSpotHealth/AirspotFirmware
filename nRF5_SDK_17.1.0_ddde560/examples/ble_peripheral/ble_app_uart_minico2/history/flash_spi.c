@@ -191,3 +191,106 @@ uint8_t flash_driver_uninit(void)
 {
     return zb25d16_deinit(&zb_handle);
 }
+
+// Reusable function to test SPI flash with read/write/verify
+flash_test_result_t flash_test_read_write(void)
+{
+    flash_test_result_t result = {0};
+
+    // Test data pattern
+    uint8_t  write_data[64];
+    uint8_t  read_data[64];
+    uint32_t test_addr = 0x1000; // Use a safe test address
+
+    // Fill test pattern
+    for (int i = 0; i < 64; i++)
+    {
+        write_data[i] = (uint8_t)(0xAA + i); // Pattern: 0xAA, 0xAB, 0xAC, ...
+    }
+
+    // 1. Initialize flash driver (cleanup first to avoid resource conflicts)
+    flash_driver_uninit(); // Clean up any existing initialization
+    result.init_result = flash_driver_init();
+    if (result.init_result != 0)
+    {
+        print("Flash test: Init failed (%d)\n", result.init_result);
+        return result;
+    }
+
+    // Wait for flash to be ready - simple polling without delays
+    uint8_t busy_count = 0;
+    while (flash_get_busy_state() && busy_count < 100)
+    {
+        busy_count++;
+    }
+
+    // 2. Erase entire flash chip for factory test
+    uint8_t erase_result = flash_erase_chip();
+    if (erase_result != 0)
+    {
+        print("Flash test: Chip erase failed (%d)\n", erase_result);
+        result.write_result = erase_result;
+        return result;
+    }
+
+    // Wait for chip erase to complete - simple polling
+    busy_count = 0;
+    while (flash_get_busy_state() && busy_count < 10000) // Chip erase takes much longer
+    {
+        busy_count++;
+    }
+
+    // 3. Write test data
+    result.write_result = flash_write_data(test_addr, write_data, sizeof(write_data));
+    if (result.write_result != 0)
+    {
+        print("Flash test: Write failed (%d)\n", result.write_result);
+        return result;
+    }
+
+    // Wait for write to complete - simple polling
+    busy_count = 0;
+    while (flash_get_busy_state() && busy_count < 1000)
+    {
+        busy_count++;
+    }
+
+    // 4. Read test data
+    result.read_result = flash_read_data(test_addr, read_data, sizeof(read_data));
+    if (result.read_result != 0)
+    {
+        print("Flash test: Read failed (%d)\n", result.read_result);
+        return result;
+    }
+
+    // 5. Verify data matches
+    result.verify_result = 0;
+    for (int i = 0; i < 64; i++)
+    {
+        if (write_data[i] != read_data[i])
+        {
+            print("Flash test: Data mismatch at byte %d (wrote 0x%02X, read 0x%02X)\n",
+                  i, write_data[i], read_data[i]);
+            result.verify_result = 1;
+            break;
+        }
+    }
+
+    // Set overall success
+    result.success = (result.init_result == 0 && result.write_result == 0 &&
+                      result.read_result == 0 && result.verify_result == 0)
+                         ? 1
+                         : 0;
+
+    if (result.success)
+    {
+        print("Flash test: All operations PASSED\n");
+    }
+    else
+    {
+        print("Flash test: FAILED (init=%d, write=%d, read=%d, verify=%d)\n",
+              result.init_result, result.write_result, result.read_result, result.verify_result);
+    }
+
+    return result;
+}
