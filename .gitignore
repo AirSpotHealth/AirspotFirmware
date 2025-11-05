@@ -45,8 +45,12 @@ DFU_PKG/*.csv
 *private*.pem
 DFU_PKG/private.pem
 
-# 🔒 Block inner git repository (private development repo)
-# nRF5_SDK_17.1.0_ddde560/examples/ble_peripheral/ble_app_uart_minico2/.git/
+# 🔒 Ignore inner git repository (private development repo)
+# Use scripts/publish_to_public.sh script to sync code to public repo
+nRF5_SDK_17.1.0_ddde560/examples/ble_peripheral/ble_app_uart_minico2/
+
+# Internal scripts (private workflow tools)
+scripts/
 
 # Log files
 *.log
