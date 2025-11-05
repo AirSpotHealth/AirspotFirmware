@@ -1,0 +1,56 @@
+Firmware update time: 2022.12.13
+
+Firmware developed with nRF5_SDK_17.1.0
+Firmware tested with mobile phone & APP "nRF Connect".
+
+Implementations:
+    EEG sampling @100Hz
+
+    BLE connection with nus service, pairing function is currently disabled.
+
+    Data transimtion via BLE nus service.
+        Data transimtion implemented base on protocol described in file "Serial Data Format.pdf".
+
+    Command receive via BLE nus service.
+        b(0x62) Start sampling & transimtion
+        s(0x73) Stop sampling & transimtion
+        |(0x7C) Eanbel DC lead-off detection
+        .(0x2E) Disable DC lead-off detection
+    
+        Extended Command
+            0x7D Set LED display Bluetooth pairing color(blue & blinking)
+            0x7E Set LED display Bluetooth paired color(blue for 3 seconds)
+            0x7F Set LED display color red
+            0x80 Switch off all LEDs
+
+    Power button.
+        Short press button to turn on the device and display battery level for 3 seconds.
+        Short press button to display battery level state while device is on.
+        Keep press button for 3 seconds, all LEDs will light up for 1 second and then the device will switch off.
+
+    LEDs
+        Power on & battery status
+            Display battery level state for 3 seconds and then turn off.
+        On Bluetooth pairing & paired:
+            Function is implemented and tested, to be ready in further firmware version.
+        Low battery
+            LED light up orange and keep blinking.
+        On charging
+            LEDs turn on one by one with white color, and then turn off and so on.
+        Charging complete
+            ALL LEDs turn on with white color.
+        Error
+            ALL LEDs turn on with red color.
+
+    Battery charging
+        Plug a charger to device while it is on, 
+        the LEDs display battery charging status, 
+        or charge complete status, depending on the battery level.
+        Plug a charge to device while it is turned off, 
+        the device keeps turn off state,
+        hens the LEDs will not light up untill the power button is pressed.
+
+Notes:
+    LED 4 is running without red channel due to hardware wiring error, 
+    hens it's color is not correct, this issue will be handle in further version.
+
