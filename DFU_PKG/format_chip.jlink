@@ -1,0 +1,8 @@
+Device nRF52832_XXAA
+SelectInterface SWD
+Speed 4000
+connect
+r
+erase
+LoadFile final.hex
+exit

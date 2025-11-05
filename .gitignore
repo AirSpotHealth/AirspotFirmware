@@ -1,0 +1,63 @@
+# Build artifacts and temporary files
+*.o
+*.d
+*.crf
+*.lst
+*.axf
+*.htm
+*.lnp
+*.map
+*.sct
+*.dep
+*.iex
+*.Bak
+_build/
+build/
+
+# Hex files (compiled binaries)
+*.hex
+
+# Keil uVision files
+*.uvguix.*
+*.uvoptx
+JLinkLog.txt
+JLinkSettings.ini
+EventRecorderStub.scvd
+
+# IDE and editor files
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Backup and temporary directories
+*backup*/
+*copy*/
+
+# DFU Package outputs (keep source, ignore builds)
+DFU_PKG/*.hex
+DFU_PKG/*.zip
+DFU_PKG/*.csv
+
+*.pem
+*.key
+*private*.pem
+DFU_PKG/private.pem
+
+# 🔒 Block inner git repository (private development repo)
+# nRF5_SDK_17.1.0_ddde560/examples/ble_peripheral/ble_app_uart_minico2/.git/
+
+# Log files
+*.log
+dev.log
+
+# OS specific
+Thumbs.db
+desktop.ini
+
+# Personal user files
+*.user
+
+.cursor/
+

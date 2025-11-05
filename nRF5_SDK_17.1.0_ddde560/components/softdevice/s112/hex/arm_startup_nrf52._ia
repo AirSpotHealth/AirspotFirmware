@@ -1,0 +1,5 @@
+--cpu Cortex-M4.fp.sp -g --apcs=interwork --pd "__MICROLIB SETA 1" -I ..\..\..\config -I ..\config  --cpreproc_opts=-D__HEAP_SIZE=2048,-D__STACK_SIZE=2048
+-I.\RTE\_flash_s112_nrf52_7.2.0_softdevice
+-IC:\Users\niraj\AppData\Local\Arm\Packs\NordicSemiconductor\nRF_DeviceFamilyPack\8.44.1\Device\Include
+--pd "__UVISION_VERSION SETA 539" --pd "_RTE_ SETA 1" --pd "NRF52832_XXAA SETA 1" --pd "_RTE_ SETA 1" --pd "__HEAP_SIZE SETA 2048" --pd "__STACK_SIZE SETA 2048"
+--list .\_build\arm_startup_nrf52.lst --xref -o ..\..\..\..\..\..\components\softdevice\s112\hex\arm_startup_nrf52.o --depend ..\..\..\..\..\..\components\softdevice\s112\hex\arm_startup_nrf52.d "..\..\..\..\ble_app_uart_minico2\pca10040\s112\arm5_no_packs\RTE\Device\nRF52832_xxAA\arm_startup_nrf52.s"
