@@ -426,6 +426,6 @@ For issues, questions, or contributions:
 
 ---
 
-**Current Firmware Version**: 1.6.0  
+**Current Firmware Version**: 1.5.4  
 **Last Updated**: November 2025  
 **Supported Hardware**: AirSpot Custom nRF52832 Board
